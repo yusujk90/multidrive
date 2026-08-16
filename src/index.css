@@ -1,1 +1,53 @@
 @import "tailwindcss";
+
+@keyframes tooltipFadeSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(0px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+}
+
+#floating-ai-tooltip {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+}
+
+@keyframes criticalBorderPulse {
+  0%, 100% {
+    border-color: rgba(244, 63, 94, 0.95);
+    box-shadow: 0 10px 25px -5px rgba(244, 63, 94, 0.4), 0 0 12px rgba(244, 63, 94, 0.35);
+  }
+  50% {
+    border-color: rgba(244, 63, 94, 0.45);
+    box-shadow: 0 4px 12px -2px rgba(244, 63, 94, 0.2), 0 0 4px rgba(244, 63, 94, 0.15);
+  }
+}
+
+.critical-pulse {
+  animation: criticalBorderPulse 1.4s infinite ease-in-out;
+}
+
+.group:hover #floating-ai-tooltip,
+.group:focus-within #floating-ai-tooltip,
+.group:active #floating-ai-tooltip {
+  animation: tooltipFadeSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.group:hover #floating-ai-tooltip.critical-pulse,
+.group:focus-within #floating-ai-tooltip.critical-pulse,
+.group:active #floating-ai-tooltip.critical-pulse {
+  animation: tooltipFadeSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards, criticalBorderPulse 1.4s infinite ease-in-out;
+}
+
+@media (max-width: 640px) {
+  #floating-ai-tooltip {
+    max-width: calc(100vw - 40px);
+    right: 0;
+  }
+}
+

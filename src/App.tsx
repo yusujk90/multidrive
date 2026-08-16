@@ -1091,28 +1091,52 @@ export default function App() {
 
       {/* Floating AI Quick Assistant Button for instant access from any tab */}
       {activeTab !== 'ai' && (
-        <div className="fixed bottom-6 right-6 z-40 group flex flex-col items-end">
-          {/* Storage Pool Health Tooltip on Hover */}
-          <div
-            id="floating-ai-tooltip"
-            className="mb-2 px-3 py-1.5 rounded-lg bg-gray-900/95 backdrop-blur-sm text-white text-xs shadow-lg border border-gray-700/60 pointer-events-none opacity-0 group-hover:opacity-100 transition-all duration-200 translate-y-1 group-hover:translate-y-0 flex items-center gap-2 whitespace-nowrap"
-          >
-            <span
-              className={`w-2 h-2 rounded-full shrink-0 ${
-                poolSummary.usedPercentage > 85
-                  ? 'bg-rose-500 ring-2 ring-rose-500/30'
-                  : poolSummary.usedPercentage > 70
-                  ? 'bg-amber-400 ring-2 ring-amber-400/30'
-                  : 'bg-emerald-400 ring-2 ring-emerald-400/30'
-              }`}
-            />
-            <span className="font-semibold text-gray-200">
-              Pool: {Math.round(poolSummary.usedPercentage)}% full
-            </span>
-            <span className="text-gray-400 text-[11px]">
-              ({formatBytes(poolSummary.totalUsed)} / {formatBytes(poolSummary.totalLimit)})
-            </span>
-          </div>
+        <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-40 group flex flex-col items-end max-w-[calc(100vw-2rem)] pointer-events-auto">
+          {/* Storage Pool Health Tooltip on Hover / Touch */}
+          {(() => {
+            const isCritical = poolSummary.usedPercentage >= 95;
+            const isWarning = poolSummary.usedPercentage >= 85;
+            const isModerate = poolSummary.usedPercentage >= 70;
+
+            const tooltipTheme = isCritical
+              ? 'bg-rose-950/95 border-rose-500 critical-pulse shadow-rose-950/50 text-rose-100'
+              : isWarning
+              ? 'bg-amber-950/90 border-amber-500/80 shadow-amber-950/30 text-amber-100'
+              : isModerate
+              ? 'bg-slate-900/95 border-indigo-500/60 shadow-indigo-950/30 text-indigo-100'
+              : 'bg-slate-900/95 border-emerald-500/50 shadow-emerald-950/20 text-emerald-100';
+
+            const statusDot = isCritical
+              ? 'bg-rose-500 ring-2 ring-rose-400/80 animate-pulse'
+              : isWarning
+              ? 'bg-amber-400 ring-2 ring-amber-400/50'
+              : isModerate
+              ? 'bg-indigo-400 ring-2 ring-indigo-400/40'
+              : 'bg-emerald-400 ring-2 ring-emerald-400/40';
+
+            const statusText = isCritical
+              ? 'Kritis'
+              : isWarning
+              ? 'Perlu Perhatian'
+              : isModerate
+              ? 'Waspada'
+              : 'Optimal';
+
+            return (
+              <div
+                id="floating-ai-tooltip"
+                className={`mb-2 px-3.5 py-1.5 rounded-xl backdrop-blur-md text-xs shadow-xl border pointer-events-none opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-active:opacity-100 transition-all duration-200 translate-y-0 group-hover:-translate-y-1 flex items-center gap-2 max-w-[calc(100vw-2rem)] sm:max-w-sm whitespace-nowrap overflow-hidden ${tooltipTheme}`}
+              >
+                <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
+                <span className="font-bold text-[11px] sm:text-xs shrink-0">
+                  {statusText}: {Math.round(poolSummary.usedPercentage)}%
+                </span>
+                <span className="opacity-75 text-[10px] sm:text-[11px] truncate">
+                  ({formatBytes(poolSummary.totalUsed)} / {formatBytes(poolSummary.totalLimit)})
+                </span>
+              </div>
+            );
+          })()}
 
           <motion.button
             id="floating-ai-btn"
@@ -1134,7 +1158,7 @@ export default function App() {
             }}
             whileHover={{ scale: 1.08 }}
             whileTap={{ scale: 0.96 }}
-            className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2.5 font-medium text-xs border border-white/25 cursor-pointer select-none"
+            className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-2xl shadow-xl flex items-center gap-2 sm:gap-2.5 font-medium text-xs border border-white/25 cursor-pointer select-none"
             title={`DrivePool AI Assistant • Pool: ${Math.round(poolSummary.usedPercentage)}% full`}
           >
             <span className="relative flex h-2 w-2 items-center justify-center">
