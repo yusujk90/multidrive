@@ -1,0 +1,6 @@
+{
+  "name": "Multi-Drive Storage Pool",
+  "description": "Hubungkan beberapa akun Google Drive menjadi satu ruang penyimpanan terpadu dengan sinkronisasi otomatis, penyeimbang kapasitas cerdas, dan manajemen berkas multi-akun.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

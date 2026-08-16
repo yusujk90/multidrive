@@ -1,0 +1,115 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile information mapped to Firebase Authentication UID.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The user unique ID from Firebase Auth" },
+        "email": { "type": "string", "format": "email", "description": "User email address" },
+        "displayName": { "type": "string", "description": "User display name", "maxLength": 100 },
+        "photoUrl": { "type": "string", "description": "User avatar photo URL", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last updated timestamp" }
+      },
+      "required": ["uid", "email"]
+    },
+    "DriveAccount": {
+      "title": "DriveAccount",
+      "description": "Connected Google Drive account and storage quotas.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Account unique ID or Google user ID", "maxLength": 128 },
+        "userId": { "type": "string", "description": "Owner Firebase UID", "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "description": "Drive account email" },
+        "name": { "type": "string", "description": "Account name", "maxLength": 100 },
+        "photoUrl": { "type": "string", "description": "Avatar URL", "maxLength": 500 },
+        "storageLimit": { "type": "number", "description": "Total storage limit in bytes" },
+        "storageUsed": { "type": "number", "description": "Used storage in bytes" },
+        "storageAvailable": { "type": "number", "description": "Available storage in bytes" },
+        "color": { "type": "string", "description": "Accent color hex code", "maxLength": 30 },
+        "status": { "type": "string", "description": "Account connection status", "enum": ["active", "warning", "error", "disconnected"] },
+        "isPrimary": { "type": "boolean", "description": "Whether this is the primary account" },
+        "lastSyncedAt": { "type": "string", "format": "date-time", "description": "Last sync time" }
+      },
+      "required": ["id", "userId", "email", "name"]
+    },
+    "PooledFile": {
+      "title": "PooledFile",
+      "description": "Catalog of files stored across pooled Google Drives.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Google Drive File ID", "maxLength": 128 },
+        "userId": { "type": "string", "description": "Owner Firebase UID", "maxLength": 128 },
+        "accountId": { "type": "string", "description": "Associated Google Drive account ID", "maxLength": 128 },
+        "name": { "type": "string", "description": "File name", "maxLength": 255 },
+        "mimeType": { "type": "string", "description": "MIME type", "maxLength": 100 },
+        "size": { "type": "number", "description": "File size in bytes" },
+        "modifiedTime": { "type": "string", "format": "date-time", "description": "Last modification date" },
+        "webViewLink": { "type": "string", "description": "Web link to view file in Google Drive", "maxLength": 500 },
+        "iconLink": { "type": "string", "description": "Icon link", "maxLength": 500 },
+        "thumbnailLink": { "type": "string", "description": "Thumbnail image link", "maxLength": 500 },
+        "category": { "type": "string", "description": "File category", "maxLength": 50 },
+        "isReplicated": { "type": "boolean", "description": "Whether the file is replicated across drives" }
+      },
+      "required": ["id", "userId", "accountId", "name", "mimeType"]
+    },
+    "SyncLog": {
+      "title": "SyncLog",
+      "description": "Log of synchronization, rebalancing, and replication operations.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Log ID", "maxLength": 128 },
+        "userId": { "type": "string", "description": "Owner Firebase UID", "maxLength": 128 },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Log timestamp" },
+        "action": { "type": "string", "description": "Action performed", "maxLength": 50 },
+        "status": { "type": "string", "description": "Status of the action", "enum": ["success", "warning", "error", "info"] },
+        "fileName": { "type": "string", "description": "Target file name", "maxLength": 255 },
+        "fileSize": { "type": "number", "description": "Target file size in bytes" },
+        "sourceDriveName": { "type": "string", "description": "Source Drive Name", "maxLength": 100 },
+        "targetDriveName": { "type": "string", "description": "Target Drive Name", "maxLength": 100 },
+        "message": { "type": "string", "description": "Log descriptive message", "maxLength": 10000 }
+      },
+      "required": ["id", "userId", "action", "status", "message"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Conversation message with Gemini AI Assistant.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Message ID", "maxLength": 128 },
+        "userId": { "type": "string", "description": "Owner Firebase UID", "maxLength": 128 },
+        "role": { "type": "string", "enum": ["user", "model", "assistant", "system"] },
+        "content": { "type": "string", "description": "Message text content", "maxLength": 10000 },
+        "modelUsed": { "type": "string", "description": "Model identifier used", "maxLength": 50 },
+        "searchGrounding": { "type": "boolean", "description": "Whether search grounding was active" },
+        "groundingUrls": { "type": "string", "description": "Grounding citations in JSON format", "maxLength": 2000 },
+        "thinkingMode": { "type": "boolean", "description": "Whether high thinking reasoning was enabled" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Message timestamp" }
+      },
+      "required": ["id", "userId", "role", "content"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile document"
+    },
+    "/users/{userId}/drive_accounts/{accountId}": {
+      "schema": "DriveAccount",
+      "description": "Connected Google Drive accounts per user"
+    },
+    "/users/{userId}/pooled_files/{fileId}": {
+      "schema": "PooledFile",
+      "description": "Pooled files metadata catalog per user"
+    },
+    "/users/{userId}/sync_logs/{logId}": {
+      "schema": "SyncLog",
+      "description": "User sync and activity logs"
+    },
+    "/users/{userId}/chat_messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Multi-turn Gemini AI chat conversation history per user"
+    }
+  }
+}
