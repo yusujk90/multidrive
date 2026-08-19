@@ -3,6 +3,7 @@
   "appId": "1:332315759742:web:20bdcaddc681cbc1fbb42f",
   "apiKey": "AIzaSyD28dizxWdStkN1ZBKnVtNOhyQgvlP3eJk",
   "authDomain": "molten-jet-khnbb.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-multidrivestorag-d25c7ca5-9644-41f4-ac69-dc3b70e4c2f4",
   "storageBucket": "molten-jet-khnbb.firebasestorage.app",
   "messagingSenderId": "332315759742",
   "measurementId": "",

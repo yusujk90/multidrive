@@ -32,6 +32,7 @@ import {
 } from './services/storageCache';
 import {
   connectNewGoogleDriveAccount,
+  refreshGoogleOAuthToken,
   getCachedToken,
   auth,
 } from './services/firebaseAuth';
@@ -51,6 +52,8 @@ import {
   downloadFileBlob,
   copyFileBetweenDrives,
   createFolderInDrive,
+  onDriveAuthError,
+  refreshAllAccounts,
 } from './services/driveApi';
 import {
   syncDriveAccountsToCloudSql,
@@ -68,6 +71,7 @@ import { FileUploadModal } from './components/FileUploadModal';
 import { AutoBalancerModal } from './components/AutoBalancerModal';
 import { AccountManagerModal } from './components/AccountManagerModal';
 import { FileDetailsModal } from './components/FileDetailsModal';
+import { PolyglotServicesModal } from './components/PolyglotServicesModal';
 import { CheckCircle2, AlertCircle, Sparkles, Zap } from 'lucide-react';
 
 const pageVariants: Variants = {
@@ -114,6 +118,7 @@ export default function App() {
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isAutoBalancerModalOpen, setIsAutoBalancerModalOpen] = useState(false);
+  const [isPolyglotModalOpen, setIsPolyglotModalOpen] = useState(false);
   const [uploadDefaultAccountId, setUploadDefaultAccountId] = useState<string | undefined>(undefined);
   const [activeDetailsFile, setActiveDetailsFile] = useState<UnifiedFile | null>(null);
   const [droppedFilesBatch, setDroppedFilesBatch] = useState<FileList | null>(null);
@@ -139,6 +144,23 @@ export default function App() {
       }
     });
     return () => unsubscribe();
+  }, []);
+
+  // Listen for 401 UNAUTHENTICATED Drive Auth Errors and mark account as expired
+  useEffect(() => {
+    const unsubscribe = onDriveAuthError(({ accountEmail, message }) => {
+      setAccounts((prev) =>
+        prev.map((a) =>
+          a.email.toLowerCase() === accountEmail.toLowerCase()
+            ? { ...a, status: 'expired' as const }
+            : a
+        )
+      );
+      showToast(message, 'error');
+    });
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   // Save changes to localStorage Cache, Firestore & Cloud SQL Backend
@@ -269,11 +291,52 @@ export default function App() {
       };
       setSyncLogs((prev) => [newLog, ...prev]);
 
+      // Refresh all accounts to ensure metrics and quotas across the pool are fully accurate
+      try {
+        const refreshedList = await refreshAllAccounts([...accounts.filter(a => a.email !== account.email), account]);
+        setAccounts(refreshedList);
+      } catch (_refErr) {}
+
       showToast(`Akun ${account.name} (${account.email}) berhasil dihubungkan! Kuota bertambah +15 GB.`);
     } catch (err: any) {
       console.error(err);
       showToast(`Gagal menghubungkan Google Drive: ${err.message || err}`, 'error');
       throw err;
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  // Relink an expired Google OAuth Drive account directly
+  const handleRelinkAccount = async (accountId: string) => {
+    const acc = accounts.find((a) => a.id === accountId || a.email === accountId);
+    if (!acc) return;
+
+    showToast(`Membuka Google OAuth Popup untuk merelinkan ${acc.email}...`);
+    setIsConnecting(true);
+
+    try {
+      const freshToken = await refreshGoogleOAuthToken(acc.email, true);
+      const activeList = accounts.map((a) =>
+        a.id === acc.id || a.email.toLowerCase() === acc.email.toLowerCase()
+          ? {
+              ...a,
+              accessToken: freshToken,
+              status: 'active' as const,
+              lastSyncedAt: new Date().toISOString(),
+            }
+          : a
+      );
+
+      // Call refreshAllAccounts to iterate and fetch latest storage metrics for all accounts
+      const refreshedAccounts = await refreshAllAccounts(activeList);
+      setAccounts(refreshedAccounts);
+      saveCachedAccounts(refreshedAccounts);
+
+      showToast(`Akun ${acc.name} (${acc.email}) berhasil di-relink dan kuota storage diperbarui!`, 'success');
+    } catch (err: any) {
+      console.error('Failed to relink account:', err);
+      showToast(err.message || `Gagal melakukan relink otentikasi untuk ${acc.email}`, 'error');
     } finally {
       setIsConnecting(false);
     }
@@ -416,7 +479,7 @@ export default function App() {
       const token = targetAccount.accessToken || getCachedToken(targetAccount.email);
       if (token && targetAccount.status !== 'demo') {
         try {
-          const res = await uploadFileToDrive(token, file, file.name, file.type);
+          const res = await uploadFileToDrive(token, file, file.name, file.type, undefined, targetAccount.email);
           uploadedDriveId = res.id;
           webViewLink = res.webViewLink || webViewLink;
         } catch (upErr) {
@@ -482,7 +545,17 @@ export default function App() {
     let newFileId = `file_copy_${Date.now()}`;
     let webViewLink = file.webViewLink;
 
-    if (sourceToken && targetToken && sourceAcc.status !== 'demo' && targetAcc.status !== 'demo') {
+    const isSyntheticFile =
+      file.id.startsWith('file_demo_') ||
+      file.id.startsWith('file_up_') ||
+      file.id.startsWith('file_copy_') ||
+      file.id.startsWith('folder_') ||
+      sourceAcc.status === 'demo' ||
+      targetAcc.status === 'demo' ||
+      sourceAcc.id.startsWith('drive_demo_') ||
+      targetAcc.id.startsWith('drive_demo_');
+
+    if (!isSyntheticFile && sourceToken && targetToken) {
       try {
         const copyRes = await copyFileBetweenDrives(sourceToken, targetToken, file);
         newFileId = copyRes.id;
@@ -555,7 +628,7 @@ export default function App() {
 
     if (token && acc?.status !== 'demo') {
       try {
-        await deleteFileFromDrive(token, file.id);
+        await deleteFileFromDrive(token, file.id, acc.email);
       } catch (delErr) {
         console.warn('Real delete failed:', delErr);
       }
@@ -601,7 +674,7 @@ export default function App() {
     if (token && acc?.status !== 'demo') {
       try {
         showToast(`Mengunduh "${file.name}" dari Google Drive...`);
-        const blob = await downloadFileBlob(token, file.id);
+        const blob = await downloadFileBlob(token, file.id, acc.email);
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -633,7 +706,7 @@ export default function App() {
 
     if (token && acc.status !== 'demo') {
       try {
-        const res = await createFolderInDrive(token, folderName);
+        const res = await createFolderInDrive(token, folderName, undefined, acc.email);
         folderId = res.id;
       } catch (err) {
         console.warn('Folder creation on Drive API failed:', err);
@@ -682,20 +755,49 @@ export default function App() {
         let newFileId = file.id;
         let webViewLink = file.webViewLink;
 
-        // Perform real Google Drive migration if real OAuth tokens are present
-        if (
-          sourceToken &&
-          targetToken &&
-          fromAccount.status !== 'demo' &&
-          toAccount.status !== 'demo'
-        ) {
-          try {
-            const copied = await copyFileBetweenDrives(sourceToken, targetToken, file);
-            newFileId = copied.id;
-            webViewLink = copied.webViewLink || webViewLink;
-            await deleteFileFromDrive(sourceToken, file.id);
-          } catch (err: any) {
-            console.warn('Real drive rebalance transfer failed, shifting within pool state:', err);
+        const isSyntheticFile =
+          file.id.startsWith('file_demo_') ||
+          file.id.startsWith('file_up_') ||
+          file.id.startsWith('file_copy_') ||
+          file.id.startsWith('folder_') ||
+          fromAccount.status === 'demo' ||
+          toAccount.status === 'demo' ||
+          fromAccount.id.startsWith('drive_demo_') ||
+          toAccount.id.startsWith('drive_demo_');
+
+        // Perform real Google Drive migration ONLY if real Google Drive file AND real OAuth tokens are present
+        let migrationNote = 'Relokasi ruang virtual pool';
+        if (!isSyntheticFile) {
+          if (sourceToken && targetToken) {
+            try {
+              const copied = await copyFileBetweenDrives(
+                sourceToken,
+                targetToken,
+                file,
+                undefined,
+                fromAccount.email,
+                toAccount.email
+              );
+              newFileId = copied.id;
+              webViewLink = copied.webViewLink || webViewLink;
+              
+              // Remove file from source drive after successful copy
+              try {
+                await deleteFileFromDrive(sourceToken, file.id, fromAccount.email);
+              } catch (delErr) {
+                console.warn('Gagal menghapus berkas asal setelah penyalinan:', delErr);
+              }
+              migrationNote = 'Relokasi fisik Google Drive berhasil';
+            } catch (migErr: any) {
+              const errMsg = migErr?.message || String(migErr);
+              const isAuthError = errMsg.includes('401') || errMsg.includes('UNAUTHENTICATED');
+              if (isAuthError) {
+                showToast(`Sesi Google Drive untuk ${fromAccount.name} telah berakhir. Silakan login ulang untuk sync fisik.`, 'error');
+              }
+              migrationNote = `Transfer virtual (${isAuthError ? 'Token Google Drive kedaluwarsa' : errMsg})`;
+            }
+          } else {
+            migrationNote = 'Transfer virtual (Token akun perlu diperbarui/login ulang)';
           }
         }
 
@@ -747,7 +849,7 @@ export default function App() {
           fromAccount: fromAccount.email,
           toAccount: toAccount.email,
           status: 'success',
-          message: `Auto-Balancer memindahkan "${file.name}" (${formatBytes(file.size)}) dari ${fromAccount.name} ke ${toAccount.name}: ${reason}`,
+          message: `Auto-Balancer: ${file.name} (${formatBytes(file.size)}) [${fromAccount.name} ➔ ${toAccount.name}] - ${migrationNote}`,
         };
         newLogs.unshift(logItem);
       }
@@ -917,6 +1019,7 @@ export default function App() {
             setActiveTab('explorer');
           }
         }}
+        onOpenPolyglotModal={() => setIsPolyglotModalOpen(true)}
       />
 
       {/* Main Workspace Layout (Sidebar + Content) */}
@@ -966,6 +1069,7 @@ export default function App() {
                       setUploadDefaultAccountId(accId);
                       setIsUploadModalOpen(true);
                     }}
+                    onRelinkAccount={handleRelinkAccount}
                   />
                 </motion.div>
               )}
@@ -1125,7 +1229,7 @@ export default function App() {
             return (
               <div
                 id="floating-ai-tooltip"
-                className={`mb-2 px-3.5 py-1.5 rounded-xl backdrop-blur-md text-xs shadow-xl border pointer-events-none opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-active:opacity-100 transition-all duration-200 translate-y-0 group-hover:-translate-y-1 flex items-center gap-2 max-w-[calc(100vw-2rem)] sm:max-w-sm whitespace-nowrap overflow-hidden ${tooltipTheme}`}
+                className={`mb-2 px-3.5 py-1.5 rounded-xl backdrop-blur-md text-xs shadow-xl border pointer-events-none z-[9999] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-active:opacity-100 transition-all duration-200 translate-y-0 group-hover:-translate-y-1 flex items-center gap-2 max-w-[calc(100vw-2rem)] sm:max-w-sm whitespace-nowrap overflow-hidden ${tooltipTheme}`}
               >
                 <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
                 <span className="font-bold text-[11px] sm:text-xs shrink-0">
@@ -1225,6 +1329,12 @@ export default function App() {
         onDownload={handleDownloadFile}
         onDelete={handleDeleteFile}
         onCrossDriveCopy={handleCrossDriveCopy}
+      />
+
+      {/* Polyglot Microservices Modal (Rust WASM, Python FastAPI, Go Worker) */}
+      <PolyglotServicesModal
+        isOpen={isPolyglotModalOpen}
+        onClose={() => setIsPolyglotModalOpen(false)}
       />
     </div>
   );

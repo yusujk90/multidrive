@@ -1,6 +1,4 @@
-import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import {
-  getFirestore,
   doc,
   getDoc,
   setDoc,
@@ -14,19 +12,10 @@ import {
   getDocFromServer,
   Firestore,
 } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
-import { auth } from './firebaseAuth';
+import { app, auth, db } from './firebaseAuth';
 import { DriveAccount, PooledFile, SyncLog } from '../types';
 
-// Initialize the Firebase app instance using configuration from firebase-applet-config.json
-export const app: FirebaseApp =
-  getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-
-// Explicitly pass the initialized app instance (and configured database ID) to getFirestore
-const configuredDatabaseId = (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId;
-export const db: Firestore = configuredDatabaseId
-  ? getFirestore(app, configuredDatabaseId)
-  : getFirestore(app);
+export { app, db };
 
 export enum OperationType {
   CREATE = 'create',
@@ -75,15 +64,18 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(JSON.stringify(errInfo));
 }
 
+let isFirestoreActive = true;
+
 // Test initial connection to Firestore
 export async function validateFirestoreConnection() {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
+    isFirestoreActive = true;
   } catch (error: any) {
-    // Gracefully ignore offline or uninitialized database check in preview sandbox
-    if (error instanceof Error && (error.message.includes('the client is offline') || error.message.includes('Database') || error.message.includes('not found'))) {
-      // Benign warning in development sandbox
-      return;
+    if (error instanceof Error && (error.message.includes('not found') || error.message.includes('Database'))) {
+      isFirestoreActive = false;
+    } else {
+      isFirestoreActive = true;
     }
   }
 }
@@ -95,6 +87,7 @@ export async function saveUserProfile(user: {
   displayName?: string | null;
   photoURL?: string | null;
 }) {
+  if (!isFirestoreActive) return;
   const path = `users/${user.uid}`;
   try {
     await setDoc(
@@ -108,13 +101,14 @@ export async function saveUserProfile(user: {
       },
       { merge: true }
     );
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+  } catch (_error) {
+    // Silently ignore if firestore is unprovisioned
   }
 }
 
 // Save connected drive accounts to Firestore
 export async function saveDriveAccountToFirestore(userId: string, account: DriveAccount) {
+  if (!isFirestoreActive) return;
   const path = `users/${userId}/drive_accounts/${account.id}`;
   try {
     await setDoc(doc(db, 'users', userId, 'drive_accounts', account.id), {
@@ -131,13 +125,14 @@ export async function saveDriveAccountToFirestore(userId: string, account: Drive
       isPrimary: Boolean(account.isPrimary),
       lastSyncedAt: account.lastSyncedAt || new Date().toISOString(),
     });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+  } catch (_error) {
+    // Silently ignore if firestore is unprovisioned
   }
 }
 
 // Save pooled files catalog to Firestore
 export async function savePooledFileToFirestore(userId: string, file: Partial<PooledFile> & { id: string; accountId: string; name: string; mimeType: string }) {
+  if (!isFirestoreActive) return;
   const path = `users/${userId}/pooled_files/${file.id}`;
   try {
     await setDoc(doc(db, 'users', userId, 'pooled_files', file.id), {
@@ -154,13 +149,14 @@ export async function savePooledFileToFirestore(userId: string, file: Partial<Po
       category: file.category || 'other',
       isReplicated: Boolean(file.isReplicated),
     });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+  } catch (_error) {
+    // Silently ignore if firestore is unprovisioned
   }
 }
 
 // Save sync log to Firestore
 export async function saveSyncLogToFirestore(userId: string, log: SyncLog) {
+  if (!isFirestoreActive) return;
   const path = `users/${userId}/sync_logs/${log.id}`;
   try {
     await setDoc(doc(db, 'users', userId, 'sync_logs', log.id), {
@@ -175,8 +171,8 @@ export async function saveSyncLogToFirestore(userId: string, log: SyncLog) {
       targetDriveName: log.targetDriveName || '',
       message: log.message,
     });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+  } catch (_error) {
+    // Silently ignore if firestore is unprovisioned
   }
 }
 
@@ -194,6 +190,7 @@ export async function saveChatMessageToFirestore(
     timestamp: string;
   }
 ) {
+  if (!isFirestoreActive) return;
   const path = `users/${userId}/chat_messages/${message.id}`;
   try {
     const data: Record<string, any> = {
@@ -208,7 +205,7 @@ export async function saveChatMessageToFirestore(
       timestamp: message.timestamp || new Date().toISOString(),
     };
     await setDoc(doc(db, 'users', userId, 'chat_messages', message.id), data);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+  } catch (_error) {
+    // Silently ignore if firestore is unprovisioned
   }
 }

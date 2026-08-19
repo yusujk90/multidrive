@@ -1,3 +1,4 @@
+import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import {
   getAuth,
   signInWithPopup,
@@ -5,12 +6,40 @@ import {
   signOut,
   Auth,
 } from 'firebase/auth';
+import { getFirestore, Firestore } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { app } from './firestoreStorage';
 import { DriveAccount } from '../types';
 import { fetchAccountAbout } from './driveApi';
 
+// Initialize Firebase App instance
+export const app: FirebaseApp =
+  getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+
+// Initialize Firebase Auth instance
 export const auth: Auth = getAuth(app);
+
+// Read 'firestoreDatabaseId' from firebase-applet-config.json
+const config = firebaseConfig as { firestoreDatabaseId?: string; [key: string]: any };
+
+/**
+ * Defensive Firestore initialization function that reads the 'firestoreDatabaseId' from 'firebase-applet-config.json'.
+ * If the value is '(default)' or missing, call getFirestore(app) without an ID;
+ * otherwise, call getFirestore(app, config.firestoreDatabaseId) explicitly.
+ * This resolves the 'Database (default) not found' error during production builds.
+ */
+export function initializeFirestore(firebaseApp: FirebaseApp, appConfig: typeof config): Firestore {
+  const dbId = appConfig.firestoreDatabaseId;
+  if (!dbId || typeof dbId !== 'string' || dbId.trim() === '' || dbId.trim() === '(default)' || dbId.trim().toLowerCase() === 'default') {
+    return getFirestore(firebaseApp);
+  }
+  return getFirestore(firebaseApp, dbId.trim());
+}
+
+export const db: Firestore = initializeFirestore(app, config);
+
+export function getDb(): Firestore {
+  return db;
+}
 
 declare global {
   interface Window {
@@ -33,6 +62,7 @@ declare global {
 }
 
 export const SCOPES = [
+  'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/drive.file',
   'https://www.googleapis.com/auth/drive.readonly',
   'https://www.googleapis.com/auth/photoslibrary.readonly',
@@ -59,16 +89,270 @@ export const getNextAccountColor = () => {
   return color;
 };
 
-// In-memory token storage
-const tokenCache: Record<string, string> = {};
+/**
+ * SecureLocalStorage: Persistent and memory-backed Token Manager
+ * with automatic expiration checks and safe base64 encoding.
+ */
+class SecureTokenManager {
+  private storagePrefix = 'multidrive_sec_token_v1_';
+  private memoryCache: Map<string, { token: string; expiresAt: number }> = new Map();
 
-export const setCachedToken = (key: string, token: string) => {
-  tokenCache[key] = token;
+  private encode(data: string): string {
+    try {
+      return btoa(encodeURIComponent(data));
+    } catch {
+      return data;
+    }
+  }
+
+  private decode(encoded: string): string {
+    try {
+      return decodeURIComponent(atob(encoded));
+    } catch {
+      return encoded;
+    }
+  }
+
+  public setToken(accountEmail: string, token: string, expiresInSeconds: number = 3500): void {
+    if (!accountEmail || !token) return;
+    const cleanEmail = accountEmail.toLowerCase().trim();
+    const expiresAt = Date.now() + expiresInSeconds * 1000;
+    const payload = JSON.stringify({ token, expiresAt, email: cleanEmail });
+
+    this.memoryCache.set(cleanEmail, { token, expiresAt });
+
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(this.storagePrefix + cleanEmail, this.encode(payload));
+      }
+    } catch (err) {
+      console.warn('[SecureTokenManager] localStorage write unavailable:', err);
+    }
+  }
+
+  public getToken(accountEmail: string): string | null {
+    if (!accountEmail) return null;
+    const cleanEmail = accountEmail.toLowerCase().trim();
+
+    // 1. Check in-memory store
+    const memEntry = this.memoryCache.get(cleanEmail);
+    if (memEntry) {
+      // 60-second buffer before expiry
+      if (Date.now() < memEntry.expiresAt - 60000) {
+        return memEntry.token;
+      }
+      this.memoryCache.delete(cleanEmail);
+    }
+
+    // 2. Check persistent localStorage
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const raw = window.localStorage.getItem(this.storagePrefix + cleanEmail);
+        if (raw) {
+          const parsed = JSON.parse(this.decode(raw));
+          if (parsed && parsed.token && parsed.expiresAt) {
+            if (Date.now() < parsed.expiresAt - 60000) {
+              this.memoryCache.set(cleanEmail, { token: parsed.token, expiresAt: parsed.expiresAt });
+              return parsed.token;
+            }
+            // Token expired in storage -> remove
+            this.removeToken(cleanEmail);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[SecureTokenManager] localStorage read error:', err);
+    }
+
+    return null;
+  }
+
+  public isTokenExpired(accountEmail: string): boolean {
+    return this.getToken(accountEmail) === null;
+  }
+
+  public removeToken(accountEmail: string): void {
+    if (!accountEmail) return;
+    const cleanEmail = accountEmail.toLowerCase().trim();
+    this.memoryCache.delete(cleanEmail);
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.removeItem(this.storagePrefix + cleanEmail);
+      }
+    } catch (_e) {}
+  }
+
+  public clearAllTokens(): void {
+    this.memoryCache.clear();
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        Object.keys(window.localStorage)
+          .filter((k) => k.startsWith(this.storagePrefix))
+          .forEach((k) => window.localStorage.removeItem(k));
+      }
+    } catch (_e) {}
+  }
+}
+
+export const SecureLocalStorage = new SecureTokenManager();
+export const tokenManager = SecureLocalStorage;
+
+export const setCachedToken = (key: string, token: string, expiresInSeconds: number = 3500) => {
+  SecureLocalStorage.setToken(key, token, expiresInSeconds);
 };
 
 export const getCachedToken = (key: string): string | null => {
-  return tokenCache[key] || null;
+  return SecureLocalStorage.getToken(key);
 };
+
+/**
+ * Initiate silent or prompt-based token refresh using Google Identity Services or Firebase Auth
+ */
+export async function refreshGoogleOAuthToken(
+  accountEmail?: string,
+  forcePrompt: boolean = false
+): Promise<string> {
+  const clientId = (firebaseConfig as any).oAuthClientId || '';
+
+  // 1. Try Google Identity Services (GIS) token refresh
+  if (clientId && window.google?.accounts?.oauth2) {
+    try {
+      const token = await new Promise<string>((resolve, reject) => {
+        const clientConfig: any = {
+          client_id: clientId,
+          scope: SCOPES.join(' '),
+          prompt: forcePrompt ? 'select_account' : '',
+          callback: (resp: any) => {
+            if (resp.error) {
+              reject(new Error(typeof resp.error === 'string' ? resp.error : 'Sesi otentikasi Google berakhir'));
+            } else if (resp.access_token) {
+              resolve(resp.access_token);
+            } else {
+              reject(new Error('Tidak ada token yang dikembalikan dari Google'));
+            }
+          },
+          error_callback: (err: any) => {
+            reject(new Error(err?.message || 'Gagal memperbarui token Google'));
+          },
+        };
+        if (accountEmail) {
+          clientConfig.hint = accountEmail;
+        }
+
+        const tokenClient = window.google.accounts.oauth2.initTokenClient(clientConfig);
+        tokenClient.requestAccessToken({ prompt: forcePrompt ? 'select_account' : '', hint: accountEmail } as any);
+      });
+
+      if (token) {
+        if (accountEmail) {
+          setCachedToken(accountEmail, token);
+        }
+        return token;
+      }
+    } catch (gisErr) {
+      console.warn('[TokenRefresh] Silent GIS refresh failed, trying popup fallback:', gisErr);
+    }
+  }
+
+  // 2. Fallback: Firebase Auth Google Auth Provider Popup
+  const provider = new GoogleAuthProvider();
+  SCOPES.forEach((scope) => provider.addScope(scope));
+  if (accountEmail) {
+    provider.setCustomParameters({ login_hint: accountEmail, prompt: forcePrompt ? 'select_account' : 'consent' });
+  }
+
+  const result = await signInWithPopup(auth, provider);
+  const credential = GoogleAuthProvider.credentialFromResult(result);
+
+  if (!credential?.accessToken) {
+    throw new Error('Gagal memperbarui token akses Google Drive.');
+  }
+
+  const newToken = credential.accessToken;
+  if (accountEmail) {
+    setCachedToken(accountEmail, newToken);
+  }
+  return newToken;
+}
+
+/**
+ * Wrapper utility that automatically detects 401 UNAUTHENTICATED errors,
+ * refreshes the Google OAuth token silently, and retries the operation once.
+ */
+export async function executeWithTokenRefresh<T>(
+  accountEmail: string,
+  initialToken: string | undefined,
+  operation: (token: string) => Promise<T>
+): Promise<T> {
+  let token = (initialToken && initialToken.trim() !== '') ? initialToken : getCachedToken(accountEmail);
+
+  if (!token && accountEmail) {
+    try {
+      token = await refreshGoogleOAuthToken(accountEmail, false);
+    } catch (_e) {
+      // Ignore initial refresh failure and attempt operation with fallback
+    }
+  }
+
+  try {
+    return await operation(token || '');
+  } catch (error: any) {
+    const errStr = String(error?.message || error);
+    const is401 =
+      errStr.includes('401') ||
+      errStr.includes('UNAUTHENTICATED') ||
+      errStr.includes('Invalid Credentials') ||
+      errStr.includes('authentication credential');
+
+    if (is401 && accountEmail) {
+      console.warn(`[TokenRefresh] Detected 401 error for ${accountEmail}. Retrying operation with fresh OAuth token...`);
+      try {
+        const freshToken = await refreshGoogleOAuthToken(accountEmail, false);
+        if (freshToken) {
+          setCachedToken(accountEmail, freshToken);
+          return await operation(freshToken);
+        }
+      } catch (refreshErr) {
+        console.warn(`[TokenRefresh] Automatic token refresh failed for ${accountEmail}:`, refreshErr);
+      }
+
+      // Notify UI listeners that this specific account requires OAuth re-linking
+      const { notifyDriveAuthError, DriveAuthError } = await import('./driveApi');
+      const userMsg = `Akun ${accountEmail} memerlukan login ulang (HTTP 401 UNAUTHENTICATED). Token Google OAuth telah kadaluwarsa.`;
+      notifyDriveAuthError(accountEmail, userMsg);
+      throw new DriveAuthError(userMsg, accountEmail, 401);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Global HTTP Fetch interceptor that automatically injects the active OAuth token for an account,
+ * checks for expiration in SecureLocalStorage, and intercepts 401 responses to perform silent refresh or mark account as expired.
+ */
+export async function fetchWithAuthInterceptor(
+  url: string,
+  options: RequestInit = {},
+  accountEmail?: string,
+  initialToken?: string
+): Promise<Response> {
+  return executeWithTokenRefresh(accountEmail || '', initialToken, async (token) => {
+    const headers = new Headers(options.headers || {});
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+    const response = await fetch(url, {
+      ...options,
+      headers,
+    });
+
+    if (response.status === 401) {
+      throw new Error(`401 Unauthorized: ${await response.text()}`);
+    }
+
+    return response;
+  });
+}
 
 /**
  * Fetch basic user profile using Google OAuth2 UserInfo endpoint

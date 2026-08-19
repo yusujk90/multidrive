@@ -35,6 +35,7 @@ interface HeaderProps {
   onToggleMobileSidebar?: () => void;
   searchQuery?: string;
   onSearchChange?: (q: string) => void;
+  onOpenPolyglotModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -51,6 +52,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleMobileSidebar,
   searchQuery = '',
   onSearchChange,
+  onOpenPolyglotModal,
 }) => {
   const [connStatus, setConnStatus] = useState<ConnectivityStatus | null>(null);
 
@@ -177,6 +179,21 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         {/* Upload Button */}
+        {onOpenPolyglotModal && (
+          <button
+            id="header-polyglot-btn"
+            onClick={onOpenPolyglotModal}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 active:scale-98 transition-all"
+            title="Polyglot Microservices (Rust WASM • Python AI • Go Worker)"
+          >
+            <Zap className="h-3.5 w-3.5 text-amber-600" />
+            <span className="hidden xl:inline">Polyglot Core</span>
+            <span className="text-[10px] bg-amber-200/80 text-amber-900 px-1.5 py-0.5 rounded-full font-mono">
+              WASM • Py • Go
+            </span>
+          </button>
+        )}
+
         {onOpenFileUpload && (
           <button
             id="header-upload-btn"

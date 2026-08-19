@@ -38,6 +38,7 @@ interface StorageOverviewProps {
   onSelectAccountFilter: (accountId: string) => void;
   onTriggerRebalance: () => void;
   onOpenFileUpload?: (accountId?: string) => void;
+  onRelinkAccount?: (accountId: string) => void;
 }
 
 export const StorageOverview: React.FC<StorageOverviewProps> = ({
@@ -51,12 +52,14 @@ export const StorageOverview: React.FC<StorageOverviewProps> = ({
   onSelectAccountFilter,
   onTriggerRebalance,
   onOpenFileUpload,
+  onRelinkAccount,
 }) => {
   // Health calculations
   const highUsageAccounts = accounts.filter(
     (a) => a.storageLimit > 0 && (a.storageUsed / a.storageLimit) * 100 > 85
   );
-  const isHealthy = highUsageAccounts.length === 0 && accounts.length > 0;
+  const expiredAccounts = accounts.filter((a) => a.status === 'expired');
+  const isHealthy = highUsageAccounts.length === 0 && expiredAccounts.length === 0 && accounts.length > 0;
   const primaryAccount = accounts.find((a) => a.isPrimary) || accounts[0];
 
   // Recent files (last 6)
@@ -67,6 +70,41 @@ export const StorageOverview: React.FC<StorageOverviewProps> = ({
   return (
     <div className="space-y-6">
       
+      {/* Expired Accounts Warning Banner */}
+      {expiredAccounts.length > 0 && (
+        <div className="rounded-2xl bg-red-50 border border-red-200 p-4 shadow-xs space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-red-100 rounded-xl text-red-600 shrink-0">
+                <AlertCircle className="h-5 w-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-red-950">
+                  {expiredAccounts.length} Akun Google Drive Memerlukan Otentikasi Ulang (401 UNAUTHENTICATED)
+                </h4>
+                <p className="text-xs text-red-700 mt-0.5">
+                  Sesi Google OAuth untuk akun berikut telah berakhir. Klik tombol <strong>Hubungkan Ulang</strong> untuk memperbarui token akses.
+                </p>
+              </div>
+            </div>
+            {onRelinkAccount && (
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {expiredAccounts.map((acc) => (
+                  <button
+                    key={acc.id}
+                    onClick={() => onRelinkAccount(acc.id)}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white px-3.5 py-2 text-xs font-bold shadow-xs active:scale-98 transition-all"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    <span>Re-link {acc.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Top Header & Action */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
@@ -266,7 +304,12 @@ export const StorageOverview: React.FC<StorageOverviewProps> = ({
                           Utama
                         </span>
                       )}
-                      {account.status === 'demo' ? (
+                      {account.status === 'expired' ? (
+                        <span className="text-[10px] bg-red-100 text-red-800 px-2 py-0.5 rounded-full font-bold uppercase border border-red-200 animate-pulse flex items-center gap-1">
+                          <AlertCircle className="h-3 w-3 text-red-600" />
+                          <span>Expired (401)</span>
+                        </span>
+                      ) : account.status === 'demo' ? (
                         <span className="text-[10px] bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full font-medium uppercase">
                           Sandbox
                         </span>
@@ -287,6 +330,29 @@ export const StorageOverview: React.FC<StorageOverviewProps> = ({
                       {account.email}
                     </p>
                   </div>
+
+                  {/* Expired warning prompt */}
+                  {account.status === 'expired' && (
+                    <div className="mt-3 p-2.5 rounded-xl bg-red-50 border border-red-200 text-xs space-y-2">
+                      <div className="flex items-center gap-1.5 text-red-900 font-bold text-[11px]">
+                        <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />
+                        <span>Sesi OAuth Berakhir (401)</span>
+                      </div>
+                      <p className="text-[11px] text-red-700 leading-tight">
+                        Akses Google Drive untuk {account.email} memerlukan relink otentikasi.
+                      </p>
+                      {onRelinkAccount && (
+                        <button
+                          type="button"
+                          onClick={() => onRelinkAccount(account.id)}
+                          className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 text-xs font-bold transition-all shadow-2xs active:scale-98"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          <span>Hubungkan Ulang (Re-link)</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
 
                   {/* Usage Info & Progress Bar */}
                   <div className="mt-4 flex justify-between text-[11px] mb-1.5">
